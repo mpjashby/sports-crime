@@ -18,6 +18,8 @@ Sports:
   * Football (NFL, NCAA division 1)
   * Ice Hockey (NHL)
   * Soccer (MLS)
+  
+Cities: Austin, Chicago, Detroit, Kansas City (MO), Los Angeles, Louisville, Memphis, New York City, Seattle, St Louis, San Francisco and Tucson
 
 For now we're ignoring:
 
