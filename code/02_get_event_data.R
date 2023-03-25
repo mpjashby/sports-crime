@@ -3,23 +3,19 @@
 # saved in a separate `.csv.gz` file with the following columns:
 #
 #   * `city`: city name (chr)
-#   * `team`: team name (chr)
+#   * `venue`: venue name (chr)
 #   * `date_time`: date-time at which the event started (dttm)
-#   * `result`: whether the game was a win (`W`), loss (`L`) or tie (`T`) (chr)
-#   * `attendance`: number of spectators (dbl)
+#   * `home_win`: whether the game was a home win (TRUE), loss (FALSE) or tie/
+#      game at a neutral venue (NA) (lgl)
 
 
 
 # SETUP ------------------------------------------------------------------------
 
-# Note that the bigballR package is not on CRAN, but is available via
-# remotes::install_github("jflancer/bigballR")
-
 # Load sports API packages
 library(baseballr)
-library(bigballR)
+library(hoopR)
 library(rMLS)
-library(nbastatR)
 library(nflfastR)
 library(nhlapi)
 
@@ -162,6 +158,65 @@ rMLS::fixtures(2010, 2019) |>
 
 
 
+# NATIONAL BASKETBALL ASSOCIATION ----------------------------------------------
+
+# Get data (NBA seasons are over the winter, so we need data for 2020 too)
+events_nba <- load_nba_schedule(2010:2020)
+
+events_nba |>
+  filter(
+    venue_address_city %in% c(
+      "Chicago", "Detroit", "Los Angeles", "Memphis", "New York"
+      # The Golden State Warriors moved to San Francisco at the end of 2019, so
+      # there are only 17 games to include in the data, which probably isn't
+      # enough to estimate from
+      # "San Francisco"
+    ),
+    # The Palace of Auburn Hills is listed as Detroit in the data, but was
+    # actually quite a long way outside the city
+    venue_full_name != "The Palace of Auburn Hills",
+    # Exclude scheduled games that did not occur
+    status_type_completed
+  ) |>
+  rename(city = venue_address_city, venue = venue_full_name) |>
+  mutate(
+    # Get time-zone from city
+    tz = case_match(
+      city,
+      c("Chicago", "Memphis") ~ "America/Chicago",
+      "Detroit" ~ "America/Detroit",
+      c("Los Angeles", "San Francisco") ~ "America/Los_Angeles",
+      "New York" ~ "America/New_York",
+      .default = NA_character_
+    ),
+    # Parse game dates/times
+    # `date` gives the date-time in Zulu time, so we need to convert this
+    # to local later
+    date_time_utc = parse_date_time(date, orders = "Ymd HM", tz = "UTC"),
+    # If the game was at a neutral venue, set NA, otherwise TRUE if home team
+    # won, else FALSE (NBA games cannot end in a tie)
+    home_win = if_else(neutral_site, NA, home_winner)
+  ) |>
+  # `with_tz` only accepts a single time-zone name, so we have to run it
+  # separately on the data for each time zone
+  mutate(date_time = with_tz(date_time_utc, tzone = tz), .by = tz) |>
+  filter(between(as_date(date_time), ymd("2010-01-01"), ymd("2019-12-31"))) |>
+  select(city, venue, date_time, home_win) |>
+  arrange(city, venue, date_time, home_win) |>
+  # Check data is in the format we expect (any deviation from these assertions
+  # causes an error)
+  verify(has_only_names("city", "venue", "date_time", "home_win")) |>
+  verify(has_all_names("city", "venue", "date_time", "home_win")) |>
+  assert(not_na, city, venue, date_time) |>
+  assert(in_set(cities), city) |>
+  assert(is.POSIXct, date_time) |>
+  # Save data
+  write_csv(here("analysis_data/events_nba.csv.gz")) |>
+  # Summarise events in each city each year
+  count(year = year(date_time), city) |>
+  pivot_wider(names_from = year, values_from = n)
+
+
 
 # NATIONAL FOOTBALL LEAGUE -----------------------------------------------------
 
@@ -216,3 +271,21 @@ fast_scraper_schedules(2009:2019) |>
   count(year = year(date_time), city) |>
   pivot_wider(names_from = year, values_from = n)
 
+
+
+# NCAA FOOTBALL BOWL SUBDIVISION -----------------------------------------------
+
+# There are several sources of data on FBS games, but they often do not have all
+# the necessary information For example, the `bigballR` package has data but
+# does not have the start time for games, while sports-reference.com has start
+# times but not venues. collegefootballdata.com seems to have everything needed,
+# although it is a personal side project of a software developer, the project
+# seems to have been running for quite a while and be well established.
+
+# collegefootballdata.com has an API, but I have not yet heard back from them
+# about my request for an API key
+
+# Note that the bigballR package is not on CRAN, but is available via
+# remotes::install_github("jflancer/bigballR")
+
+# Get data (FBS seasons are over the winter, so we need data for 2009-10 too)
