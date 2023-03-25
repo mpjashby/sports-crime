@@ -12,8 +12,12 @@
 
 # SETUP ------------------------------------------------------------------------
 
+# Note that the bigballR package is not on CRAN, but is available via
+# remotes::install_github("jflancer/bigballR")
+
 # Load sports API packages
 library(baseballr)
+library(bigballR)
 library(rMLS)
 library(nbastatR)
 library(nflfastR)
@@ -21,6 +25,7 @@ library(nhlapi)
 
 # Load data-wrangling packages
 library(assertr)
+library(rvest)
 library(here)
 library(janitor)
 library(tidyverse)
@@ -35,180 +40,179 @@ cities <- c(
 
 # MAJOR LEAGUE BASEBALL --------------------------------------------------------
 
-# Create vector of teams names we can later use to check against
-teams_baseball <- teams_lu_table |>
-  filter(sport.id == 1) |>
-  pull("name")
-
-# The `team_results_bref()` function from `baseballr` returns all the
-# information we need if we supply a team abbreviation and a year
-expand_grid(
-  Tm = c("CHC", "CHW", "DET", "KCR", "LAD", "NYM", "NYY", "SFG", "SEA", "STL"),
-  year = 2010:2019
-) |>
-  # Get data for each team for each year
-  pmap(team_results_bref) |>
+2010:2019 |>
+  map(mlb_schedule) |>
   bind_rows() |>
-  clean_names() |>
-  # Filter so we only keep games at the team's home stadium
-  filter(h_a == "H") |>
-  # Add city and team names from reference table
-  left_join(
-    select(
-      # Filter so that the reference table includes on MLB teams, since the full
-      # reference table also contains information for minor league teams, some
-      # of which share an abbreviation with an MLB team
-      filter(teams_lu_table, sport.id == 1),
-      city = locationName,
-      team = name,
-      tm = bref_abbreviation
-    ),
-    by = "tm"
+  filter(
+    # Remove games that were cancelled, etc.
+    status_detailed_state %in% c("Completed Early", "Final"),
+    # Keep only games at stadia in the cities of interest
+    venue_name %in% c(
+      "AT&T Park", # SF Giants, until 2018
+      "Busch Stadium", # St Louis Cardinals
+      "Citi Field", # NY Mets
+      "Comerica Park", # Detroit Tigers
+      "Dodger Stadium", # LA Dodgers
+      "Guaranteed Rate Field", # Chicago White Sox, from 2017
+      "Kauffman Stadium", # Kansas City Royals
+      "Oracle Park", # SF Giants, from 2019
+      "Safeco Field", # Seattle Mariners, until 2018
+      "T-Mobile Park", # Seattle Mariners, from 2019
+      "Wrigley Field", # Chicago Cubs
+      "U.S. Cellular Field", # Chicago White Sox, until 2016
+      "Yankee Stadium" # NY Yankees
+    )
   ) |>
   mutate(
-    # Recode `city` to remove "." from "St. Louis" to match elsewhere
+    # Get city from venue
     city = case_match(
+      venue_name,
+      "AT&T Park" ~ "San Francisco",
+      "Busch Stadium" ~ "St Louis",
+      "Citi Field" ~ "New York",
+      "Comerica Park" ~ "Detroit",
+      "Dodger Stadium" ~ "Los Angeles",
+      "Guaranteed Rate Field" ~ "Chicago",
+      "Kauffman Stadium" ~ "Kansas City",
+      "Oracle Park" ~ "San Francisco",
+      "Safeco Field" ~ "Seattle",
+      "T-Mobile Park" ~ "Seattle",
+      "Wrigley Field" ~ "Chicago",
+      "U.S. Cellular Field" ~ "Chicago",
+      "Yankee Stadium" ~ "New York",
+      .default = NA_character_
+    ),
+    # Get time-zone from city
+    tz = case_match(
       city,
-      "Bronx" ~ "New York",
-      "St. Louis" ~ "St Louis",
-      .default = city
+      c("Chicago", "Kansas City", "St Louis") ~ "America/Chicago",
+      "Detroit" ~ "America/Detroit",
+      c("Los Angeles", "San Francisco", "Seattle") ~ "America/Los_Angeles",
+      "New York" ~ "America/New_York",
+      .default = NA_character_
     ),
-    # Remove numbers in brackets after dates on days with multiple games
-    date = str_remove(date, "\\s\\(.+?\\)"),
-    # Parse game dates/times
-    date_time = parse_date_time(
-      str_glue("{date} {year} {time}pm"),
-      orders = "%a %b %d %Y %I:%M%p"
-    ),
-    # Walkoff wins/losses are noted in the `result` column, but we aren't
-    # interested in whether a win/loss was a walkoff or not, so we can remove
-    # this information
-    result = str_sub(result, end = 1)
+    # Extract starting date-time
+    # `game_date` gives the date-time in Zulu time, so we need to convert this
+    # to local later
+    date_time_utc = parse_date_time(game_date, orders = "Ymd T", tz = "UTC"),
+    # If the game was a tie, set NA, otherwise TRUE if home team won, else FALSE
+    home_win = if_else(is_tie, NA, teams_home_is_winner)
   ) |>
-  select(city, team, date_time, result, attendance) |>
+  # `with_tz` only accepts a single time-zone name, so we have to run it
+  # separately on the data for each time zone
+  mutate(date_time = with_tz(date_time_utc, tzone = tz), .by = tz) |>
+  select(city, venue = venue_name, date_time, home_win) |>
   # Check data is in the format we expect (any deviation from these assertions
   # causes an error)
-  verify(has_only_names("city", "team", "date_time", "result", "attendance")) |>
-  verify(has_all_names("city", "team", "date_time", "result")) |>
-  assert(not_na, city, team, date_time, result) |>
+  verify(has_only_names("city", "venue", "date_time", "home_win")) |>
+  verify(has_all_names("city", "venue", "date_time", "home_win")) |>
+  assert(not_na, city, venue, date_time) |>
   assert(in_set(cities), city) |>
-  assert(in_set(teams_baseball), team) |>
   assert(is.POSIXct, date_time) |>
-  assert(in_set("W", "L", "T"), result) |>
-  # There are a few missing values for attendance figures, so we won't stop when
-  # we find these but instead issue a warning as a reminder of how many are
-  # missing
-  assert(not_na, attendance, error_fun = just_warn) |>
-  assert(within_bounds(1, 120000), attendance, error_fun = just_warn) |>
   # Save data
   write_csv(here("analysis_data/events_mlb.csv.gz")) |>
-  glimpse()
+  # Summarise events in each city each year
+  count(year = year(date_time), city) |>
+  pivot_wider(names_from = year, values_from = n)
 
 
 
 # MAJOR LEAGUE SOCCER ----------------------------------------------------------
 
-# Create vector of teams names we can later use to check against
-teams_mls <- team_info |>
-  filter(team_abbr %in% c("CHI", "LAFC", "NYC", "SEA")) |>
-  pull("team_name")
-
 # Get data
-events_mls <- rMLS::fixtures(2010, 2019) |>
+rMLS::fixtures(2010, 2019) |>
   clean_names() |>
   filter(
-    home %in% c(
-      "Chicago Fire FC", "Los Angeles FC", "New York City FC",
-      "Seattle Sounders FC"
+    venue %in% c(
+      "Banc of California Stadium", # LA FC (and occasional LA Galaxy)
+      "CenturyLink Field", # Seattle Sounders
+      "Citi Field", # NYC FC (occasional)
+      "Yankee Stadium" # NYC FC
     )
   ) |>
   mutate(
     city = case_match(
-      home,
-      "Chicago Fire FC" ~ "Chicago",
-      "Los Angeles FC" ~ "Los Angeles",
-      "New York City FC" ~ "New York",
-      "Seattle Sounders FC" ~ "Seattle"
+      venue,
+      "Banc of California Stadium" ~ "Los Angeles",
+      "CenturyLink Field" ~ "Seattle",
+      "Citi Field" ~ "New York",
+      "Yankee Stadium" ~ "New York"
     ),
     # Parse game dates/times
     date_time = parse_datetime(str_glue("{date} {time}")),
     # Categorise win/lose/tie
-    result = case_when(
-      home_score > away_score ~ "W",
-      home_score < away_score ~ "L",
-      home_score == away_score ~ "T",
-      .default = NA_character_
+    home_win = case_when(
+      home_score > away_score ~ TRUE,
+      home_score < away_score ~ FALSE,
+      .default = NA
     )
   ) |>
-  select(city, team = home, date_time, result, attendance) |>
+  select(city, venue, date_time, home_win) |>
   # Check data is in the format we expect (any deviation from these assertions
   # causes an error)
-  verify(has_only_names("city", "team", "date_time", "result", "attendance")) |>
-  verify(has_all_names("city", "team", "date_time", "result", "attendance")) |>
-  assert(not_na, city, team, date_time, result) |>
+  verify(has_only_names("city", "venue", "date_time", "home_win")) |>
+  verify(has_all_names("city", "venue", "date_time", "home_win")) |>
+  assert(not_na, city, venue, date_time) |>
   assert(in_set(cities), city) |>
-  assert(in_set(teams_mls), team) |>
   assert(is.POSIXct, date_time) |>
-  assert(in_set("W", "L", "T"), result) |>
-  # There are a few missing values for attendance figures, so we won't stop when
-  # we find these but instead issue a warning as a reminder of how many are
-  # missing
-  assert(not_na, attendance, error_fun = just_warn) |>
-  assert(within_bounds(1, 120000), attendance, error_fun = just_warn) |>
   # Save data
   write_csv(here("analysis_data/events_mls.csv.gz")) |>
-  glimpse()
+  count(year = year(date_time), city) |>
+  pivot_wider(names_from = year, values_from = n)
 
 
 
 
 # NATIONAL FOOTBALL LEAGUE -----------------------------------------------------
 
-# Create vector of teams names we can later use to check against
-teams_nfl <- teams_colors_logos |>
-  filter(team_abbr %in% c("CHI", "DET", "KC", "LA", "SEA")) |>
-  pull("team_name")
-
-# Get data
-fast_scraper_schedules(2010:2019) |>
-  filter(home_team %in% c("CHI", "DET", "KC", "LA", "SEA")) |>
-  # Rename team abbreviation column to allow join
-  rename(team_abbr = home_team) |>
-  left_join(
-    select(teams_colors_logos, team_abbr, team_name),
-    by = "team_abbr"
+# Get data (NFL seasons are over the winter, so we need data for 2009-10 too)
+fast_scraper_schedules(2009:2019) |>
+  filter(
+    stadium %in% c(
+      "Arrowhead Stadium", # Kansas City Chiefs
+      "Candlestick Park", # San Francisco 49ers
+      "CenturyLink Field", # Seattle Seahawks, from 2011
+      "Edward Jones Dome", # St Louis Rams
+      "Ford Field", # Detroit Lions
+      "Los Angeles Memorial Coliseum", # LA Rams
+      "Qwest Field", # Seattle Seahawks, until 2011
+      "Soldier Field" # Chicago Bears
+    )
   ) |>
   mutate(
     city = case_match(
-      team_abbr,
-      "CHI" ~ "Chicago",
-      "DET" ~ "Detroit",
-      "KC" ~ "Kansas City",
-      "LA" ~ "Los Angeles",
-      "SEA" ~ "Seattle",
+      stadium,
+      "Arrowhead Stadium" ~ "Kansas City",
+      "Candlestick Park" ~ "San Francisco",
+      "CenturyLink Field" ~ "Seattle",
+      "Edward Jones Dome" ~ "St Louis",
+      "Ford Field" ~ "Detroit",
+      "Los Angeles Memorial Coliseum" ~ "Los Angeles",
+      "Qwest Field" ~ "Seattle",
+      "Soldier Field" ~ "Chicago",
       .default = NA_character_
     ),
     # Parse game dates/times
     date_time = parse_datetime(str_glue("{gameday} {gametime}")),
     # Categorise win/lose/tie
-    result = case_when(
-      result > 0 ~ "W",
-      result < 0 ~ "L",
-      result == 0 ~ "T",
-      .default = NA_character_
+    home_win = case_when(
+      location == "Home" & result > 0 ~ TRUE,
+      location == "Home" & result < 0 ~ FALSE,
+      .default = NA
     )
   ) |>
-  select(city, team = team_name, date_time, result) |>
+  filter(between(as_date(date_time), ymd("2010-01-01"), ymd("2019-12-31"))) |>
+  select(city, venue = stadium, date_time, home_win) |>
   # Check data is in the format we expect (any deviation from these assertions
   # causes an error)
-  verify(has_only_names("city", "team", "date_time", "result")) |>
-  verify(has_all_names("city", "team", "date_time", "result")) |>
-  assert(not_na, city, team, date_time, result) |>
+  verify(has_only_names("city", "venue", "date_time", "home_win")) |>
+  verify(has_all_names("city", "venue", "date_time", "home_win")) |>
+  assert(not_na, city, venue, date_time) |>
   assert(in_set(cities), city) |>
-  assert(in_set(teams_nfl), team) |>
   assert(is.POSIXct, date_time) |>
-  assert(in_set("W", "L", "T"), result) |>
   # Save data
   write_csv(here("analysis_data/events_nfl.csv.gz")) |>
-  glimpse()
+  # Summarise events in each city each year
+  count(year = year(date_time), city) |>
+  pivot_wider(names_from = year, values_from = n)
 
