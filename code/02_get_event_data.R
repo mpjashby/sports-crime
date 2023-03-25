@@ -161,9 +161,7 @@ rMLS::fixtures(2010, 2019) |>
 # NATIONAL BASKETBALL ASSOCIATION ----------------------------------------------
 
 # Get data (NBA seasons are over the winter, so we need data for 2020 too)
-events_nba <- load_nba_schedule(2010:2020)
-
-events_nba |>
+events_nba <- load_nba_schedule(2010:2020) |>
   filter(
     venue_address_city %in% c(
       "Chicago", "Detroit", "Los Angeles", "Memphis", "New York"
@@ -212,6 +210,73 @@ events_nba |>
   assert(is.POSIXct, date_time) |>
   # Save data
   write_csv(here("analysis_data/events_nba.csv.gz")) |>
+  # Summarise events in each city each year
+  count(year = year(date_time), city) |>
+  pivot_wider(names_from = year, values_from = n)
+
+
+
+# NATIONAL HOCKEY LEAGUE -------------------------------------------------------
+
+# Get data (NHL seasons are over the winter, so we need data for 2009-10 too)
+nhl_schedule(2009:2019) |>
+  map(pluck, "dates") |>
+  bind_rows() |>
+  select(games) |>
+  unnest(cols = games) |>
+  clean_names() |>
+  filter(
+    venue_name %in% c(
+      "United Center", # Chicago
+      "Joe Louis Arena", "Little Caesars Arena", # Detroit
+      "STAPLES Center", # Los Angeles
+      "Barclays Center", "Madison Square Garden", # New York
+      "Enterprise Center", "Scottrade Center" # St Louis
+    )
+  ) |>
+  mutate(
+    city = case_match(
+      venue_name,
+      "United Center" ~ "Chicago",
+      c("Joe Louis Arena", "Little Caesars Arena") ~ "Detroit",
+      "STAPLES Center" ~ "Los Angeles",
+      c("Barclays Center", "Madison Square Garden") ~ "New York",
+      c("Enterprise Center", "Scottrade Center") ~ "St Louis"
+    ),
+    # Get time-zone from city
+    tz = case_match(
+      city,
+      c("Chicago", "St Louis") ~ "America/Chicago",
+      "Detroit" ~ "America/Detroit",
+      "Los Angeles" ~ "America/Los_Angeles",
+      "New York" ~ "America/New_York",
+      .default = NA_character_
+    ),
+    # Parse game dates/times
+    # `date` gives the date-time in Zulu time, so we need to convert this
+    # to local later
+    date_time_utc = parse_date_time(game_date, orders = "Ymd T", tz = "UTC"),
+    # Categorise win/lose/tie
+    home_win = case_when(
+      teams_home_score > teams_away_score ~ TRUE,
+      teams_home_score < teams_away_score ~ FALSE,
+      .default = NA
+    )
+  ) |>
+  # `with_tz` only accepts a single time-zone name, so we have to run it
+  # separately on the data for each time zone
+  mutate(date_time = with_tz(date_time_utc, tzone = tz), .by = tz) |>
+  filter(between(as_date(date_time), ymd("2010-01-01"), ymd("2019-12-31"))) |>
+  select(city, venue = venue_name, date_time, home_win) |>
+  # Check data is in the format we expect (any deviation from these assertions
+  # causes an error)
+  verify(has_only_names("city", "venue", "date_time", "home_win")) |>
+  verify(has_all_names("city", "venue", "date_time", "home_win")) |>
+  assert(not_na, city, venue, date_time) |>
+  assert(in_set(cities), city) |>
+  assert(is.POSIXct, date_time) |>
+  # Save data
+  write_csv(here("analysis_data/events_nhl.csv.gz")) |>
   # Summarise events in each city each year
   count(year = year(date_time), city) |>
   pivot_wider(names_from = year, values_from = n)
