@@ -21,8 +21,7 @@ crime_data <- get_crime_data(years = 2010:2019, type = "core") |>
     # Filter only cities for which we have sports data
     city_name %in% c(
       "Austin", "Chicago", "Detroit", "Kansas City", "Los Angeles",
-      "Louisville", "Memphis", "New York", "Seattle", "St Louis",
-      "San Francisco", "Tucson"
+      "New York", "Seattle", "St Louis", "San Francisco", "Tucson"
     ),
     # See https://osf.io/zyaqn/wiki/2.%20What%20data%20are%20available/ for more
     # details of offence codes
@@ -50,8 +49,6 @@ crime_data <- get_crime_data(years = 2010:2019, type = "core") |>
       "Detroit" ~ "dtt",
       "Kansas City" ~ "kcm",
       "Los Angeles" ~ "lax",
-      "Louisville" ~ "lou",
-      "Memphis" ~ "mem",
       "New York" ~ "nyc",
       "San Francisco" ~ "sfo",
       "Seattle" ~ "sea",
