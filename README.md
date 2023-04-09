@@ -8,7 +8,7 @@ Crime counts will be for homicide and assaults combined, day will be defined as 
 Separate models for:
 
   * area around the sporting event
-  * downtown
+  * downtown (the main entertainment district for each city)
   * rest of the city excluding the area around the event and downtown
 
 Sports:
@@ -19,7 +19,7 @@ Sports:
   * Ice Hockey (NHL)
   * Soccer (MLS)
   
-Cities: Austin, Chicago, Detroit, Kansas City (MO), Los Angeles, Louisville, Memphis, New York City, Seattle, St Louis, San Francisco and Tucson
+Cities: Austin, Chicago, Detroit, Kansas City (MO), Los Angeles, New York City, St Louis, San Francisco, Seattle and Tucson
 
 For now we're ignoring:
 
