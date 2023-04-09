@@ -1,4 +1,4 @@
-# This code downloads data on sporting events in different cities and saves
+# This script downloads data on sporting events in different cities and saves
 # it in a single file for further analysis. The data for each sport should be
 # saved in a separate `.csv.gz` file with the following columns:
 #
@@ -21,7 +21,6 @@ library(nhlapi)
 
 # Load data-wrangling packages
 library(assertr)
-library(rvest)
 library(here)
 library(janitor)
 library(tidyverse)
