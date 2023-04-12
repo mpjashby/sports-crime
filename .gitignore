@@ -41,3 +41,7 @@ vignettes/*.pdf
 # Very large data files
 original_data/licences_*
 original_data/hisdac_land_use.tar.gz
+
+# OSM tiles cache
+rosm.cache/
+
