@@ -3,19 +3,21 @@
 
 # Load packages
 library(crimedata)
+library(httr)
 library(tidyverse)
 
 # Due to an issue with the OSF API, we need to download 2010 data separately
 # More details: https://github.com/ropensci/osfr/issues/142
-download.file(
+GET(
   url = "https://osf.io/download/mgd3v/",
-  destfile = file_2010 <- tempfile(fileext = ".rds")
+  write_disk(file_2010 <- tempfile(fileext = ".rds")),
+  progress(),
+  timeout(60 * 60)
 )
-data_2010 <- read_rds(file_2010) |>
-  type_convert()
+data_2010 <- file_2010 |> read_rds() |> type_convert()
 
 # Get crime data and save to local file
-crime_data <- get_crime_data(years = 2010:2019, type = "core") |>
+crime_data <- get_crime_data(years = 2011:2019, type = "core") |>
   bind_rows(data_2010) |>
   filter(
     # Filter only cities for which we have sports data
@@ -40,6 +42,10 @@ crime_data <- get_crime_data(years = 2010:2019, type = "core") |>
       "90D"  # Driving Under the Influence
     )
   ) |>
+  # For some reason I can't work out, there seem to be three copies of every
+  # row in the data. To deal with this, we can group by the UID column and take
+  # the first row in each group.
+  slice(1, .by = uid) |>
   # Reduce the size of the dataset as much as possible
   mutate(
     city = case_match(
@@ -57,7 +63,7 @@ crime_data <- get_crime_data(years = 2010:2019, type = "core") |>
     ),
     date_time = format(date_single, format = "%Y-%m-%d %H:%M"),
   ) |>
-  select(city, offense_code, date_time, longitude, latitude) |>
-  arrange(date_time, city, offense_code) |>
+  select(city, offense_code, date_time, longitude, latitude, uid) |>
+  arrange(date_time, city, offense_code, uid) |>
   write_csv(here::here("analysis_data/crime_data.csv.gz")) |>
   glimpse()
