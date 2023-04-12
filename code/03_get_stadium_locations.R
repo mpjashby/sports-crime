@@ -11,7 +11,7 @@ library(tidyverse)
 # Extract venue locations
 venue_locations <- here("analysis_data") |>
   dir("^events_", full.names = TRUE) |>
-  map(read_csv) |>
+  map(read_csv, show_col_types = FALSE) |>
   bind_rows() |>
   count(city, venue) |>
   select(city, venue) |>
@@ -28,14 +28,13 @@ venue_locations <- here("analysis_data") |>
     ),
     address = str_glue("{geocode_venue_name}, {city}")
   ) |>
-  geocode(address = address)
-# |>
-#   select(city, venue, long, lat) |>
-#   st_as_sf(coords = c("long", "lat"), crs = "EPSG:4326") |>
-#   write_sf(here("analysis_data/venue_locations.gpkg"))
+  geocode(address = address) |>
+  select(city, venue, long, lat) |>
+  st_as_sf(coords = c("long", "lat"), crs = "EPSG:4326") |>
+  write_sf(here("analysis_data/venue_locations.gpkg"))
 
 # Calculate buffers around venues
-venue_buffers <- venue_locations |>
+venue_locations |>
   # Buffers need to be specified in metres, which means we need to first
   # transform to a suitable projected co-ordinate system. This needs to be done
   # separately for each row, so we will first nest the data so we can perform
