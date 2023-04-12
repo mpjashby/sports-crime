@@ -27,8 +27,8 @@ library(tidyverse)
 
 # Create vector of cities we can later use to check against
 cities <- c(
-  "Austin", "Chicago", "Detroit", "Kansas City", "Los Angeles", "Louisville",
-  "Memphis", "New York", "Seattle", "St Louis", "San Francisco", "Tucson"
+  "Austin", "Chicago", "Detroit", "Kansas City", "Los Angeles", "New York",
+  "Seattle", "St Louis", "San Francisco", "Tucson"
 )
 
 
@@ -347,9 +347,64 @@ fast_scraper_schedules(2009:2019) |>
 # seems to have been running for quite a while and be well established.
 
 # collegefootballdata.com has an API, but I have not yet heard back from them
-# about my request for an API key
+# about my request for an API key so I have had to download the data manually
+# by season -- each file contains all the FBS games in one season, both regular
+# and post-season games
 
-# Note that the bigballR package is not on CRAN, but is available via
-# remotes::install_github("jflancer/bigballR")
+# List of FBS teams and the city they play in:
+# https://en.wikipedia.org/wiki/List_of_NCAA_Division_I_FBS_football_programs
 
 # Get data (FBS seasons are over the winter, so we need data for 2009-10 too)
+
+here("original_data") |>
+  dir("^fbs_", full.names = TRUE) |>
+  map(read_csv, show_col_types = FALSE) |>
+  bind_rows() |>
+  mutate(
+    # Get city from venue
+    city = case_match(
+      venue,
+      "Darrell K Royal-Texas Memorial Stadium" ~ "Austin",
+      c("Los Angeles Memorial Coliseum", "Rose Bowl") ~ "Los Angeles",
+      "Arizona Stadium" ~ "Tucson",
+      .default = NA_character_
+    ),
+    # Get time-zone from city
+    tz = case_match(
+      city,
+      "Austin" ~ "America/Chicago",
+      "Los Angeles" ~ "America/Los_Angeles",
+      "Tucson" ~ "America/Phoenix",
+      .default = NA_character_
+    ),
+    home_win = case_when(
+      neutral_site == FALSE & home_points > away_points ~ TRUE,
+      neutral_site == FALSE & home_points < away_points ~ FALSE,
+      .default = NA
+    )
+  ) |>
+  # Remove rows outside the cities we're interested in -- this has to be done
+  # first because `with_tz()` errors if the tz code is missing
+  filter(!is.na(city)) |>
+  # `with_tz` only accepts a single time-zone name, so we have to run it
+  # separately on the data for each time zone
+  mutate(date_time = with_tz(start_date, tzone = tz), .by = tz) |>
+  filter(
+    # Only games that actually happened (i.e. were not cancelled, etc.)
+    completed == TRUE,
+    # Only games that occurred during the years we are analysing
+    between(as_date(date_time), ymd("2010-01-01"), ymd("2019-12-31"))
+  ) |>
+  select(city, venue, date_time, home_win) |>
+  # Check data is in the format we expect (any deviation from these assertions
+  # causes an error)
+  verify(has_only_names("city", "venue", "date_time", "home_win")) |>
+  verify(has_all_names("city", "venue", "date_time", "home_win")) |>
+  assert(not_na, city, venue, date_time) |>
+  assert(in_set(cities), city) |>
+  assert(is.POSIXct, date_time) |>
+  # Save data
+  write_csv(here("analysis_data/events_fbs.csv.gz")) |>
+  # Summarise events in each city each year
+  count(year = year(date_time), city) |>
+  pivot_wider(names_from = year, values_from = n)
