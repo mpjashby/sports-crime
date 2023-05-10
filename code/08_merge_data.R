@@ -5,8 +5,10 @@
 
 
 # Load packages ----------------------------------------------------------------
+
 library(ggspatial)
 library(here)
+library(sf)
 library(suncalc)
 library(tidyverse)
 
@@ -17,10 +19,9 @@ library(tidyverse)
 # Load crime data
 crime_counts <- here("analysis_data/crime_counts.csv.gz") |>
   read_csv() |>
-  mutate(
-    # Categorise dates as weekday or weekends
-    weekday = !wday(offence_date, label = TRUE) %in% c("Sat", "Sun")
-  ) |>
+  filter(offence_type == "assault") |>
+  # Categorise dates as weekday or weekends
+  mutate(weekday = !wday(offence_date, label = TRUE) %in% c("Sat", "Sun")) |>
   rename(crime_count = n)
 
 # Load event data
@@ -84,23 +85,75 @@ day_lengths <- city_centroids |>
 # the data, and (b) venues which host events for more than one sport on the same
 # day.
 events_by_venue <- events |>
-  # Extract date of event
-  mutate(date = as_date(date_time)) |>
+  mutate(
+    # Extract date of event
+    date = as_date(date_time),
+    # Match the venue names in the event data (which use the name of the venue
+    # on the date of the event) to those used in the stadium buffers data (which
+    # use the name at the end of the data period).
+    venue = case_match(
+      venue,
+      "U.S. Cellular Field" ~ "Guaranteed Rate Field",
+      "Banc of California Stadium" ~ "BMO Stadium",
+      "STAPLES Center" ~ "crypto.com Arena",
+      "Edward Jones Dome" ~ "The Dome at America's Center",
+      "AT&T Park" ~ "Oracle Park",
+      c("CenturyLink Field", "Qwest Field") ~ "Lumen Field",
+      "Safeco Field" ~ "T-Mobile Park",
+      .default = venue
+    ),
+    # Allocate the venues to complexes, using the same rules as are used to
+    # generate the buffer zone around each complex
+    complex = case_match(
+      venue,
+      # AUSTIN
+      "Darrell K Royal-Texas Memorial Stadium" ~
+        "Austin (Texas Memorial Stadium)",
+      # CHICAGO
+      "Guaranteed Rate Field" ~ "Chicago (Comiskey Park)",
+      # DETROIT
+      c("Comerica Park", "Ford Field", "Little Caesars Arena") ~
+        "Detroit (Fisher Drive)",
+      # KANSAS CITY
+      c("Arrowhead Stadium", "Kauffman Stadium") ~
+        "Kansas City (Truman Sports Complex)",
+      # LOS ANGELES
+      c("BMO Stadium", "Los Angeles Memorial Coliseum") ~
+        "Los Angeles (Exposition Park)",
+      c("crypto.com Arena", "STAPLES Center") ~ "Los Angeles (Downtown)",
+      # SEATTLE
+      c("Lumen Field", "T-Mobile Park") ~ "Seattle (SoDo)",
+      # ST LOUIS
+      c(
+        "Busch Stadium",
+        "Enterprise Center",
+        "Scottrade Center",
+        "The Dome at America's Center"
+      ) ~
+        "St Louis (Downtown)",
+      # Venues that are not near any other venues and had a single name
+      # throughout the period of the data become complexes on their own
+      .default = str_glue("{city} ({venue})")
+    )
+  ) |>
   # Count number of daytime and night-time events, where daytime events begin
   # at or before 16:59 hours. This deals with double headers.
   summarise(
     event_daytime = any(hour(date_time) <= 16),
     event_nighttime = any(hour(date_time) >= 17),
-    .by = c(venue, sport, date)
+    .by = c(complex, sport, date)
   ) |>
   # Identify where there are multiple sports being played at the same venue on
-  # the same day. These cases will be removed later, but cannot be removed until
-  # the lagged crime counts have been calculated.
+  # the same day.
   summarise(
     sport = if_else(n() > 1, "multiple", str_to_upper(first(sport))),
-    event_daytime = any(event_daytime),
-    event_nighttime = any(event_nighttime),
-    .by = c(venue, date)
+    time = case_when(
+      any(event_daytime) == TRUE & any(event_nighttime) == TRUE ~ "both",
+      any(event_daytime) == TRUE ~ "day",
+      any(event_nighttime) == TRUE ~ "night",
+      TRUE ~ NA_character_
+    ),
+    .by = c(complex, date)
   )
 
 # The downtown and rest-of-city models need data in the same city-by-day format,
@@ -141,30 +194,29 @@ events_by_day <- events |>
 
 
 ## Venue data ----
-crime_counts |>
+crimes_by_venue <- crime_counts |>
   filter(area == "venue") |>
   rename(date = offence_date) |>
   # Join day lengths
   left_join(day_lengths, by = c("city", "date")) |>
   # Join events
-  left_join(events_by_venue, by = c("venue", "date")) |>
-  # Replace missing values of sport variable, which represent days on which
-  # there were no events at a particular venue
-  replace_na(list(sport = "none")) |>
+  left_join(events_by_venue, by = c("complex", "date")) |>
+  # Replace missing values of `sport` and `time` variables, which represent days
+  # on which there were no events in a particular complex
+  replace_na(list(sport = "none", time = "none")) |>
   # Replace missing values of events variables -- which represent days in which
   # there were no events in a particular sport -- with `FALSE`
   mutate(across(where(is.logical), \(x) if_else(is.na(x), FALSE, x))) |>
   select(
     city,
-    venue,
+    complex,
     offence_type,
     date,
     crime_count,
     weekday,
     daylight_mins,
     sport,
-    event_daytime,
-    event_nighttime
+    time
   ) |>
   write_csv(here("analysis_data/model_data_venue.csv.gz")) |>
   glimpse()
@@ -174,7 +226,7 @@ crime_counts |>
 crime_counts |>
   filter(area == "ent") |>
   rename(date = offence_date) |>
-  select(-venue) |>
+  select(-complex) |>
   # Join day lengths
   left_join(day_lengths, by = c("city", "date")) |>
   # Join events
@@ -191,7 +243,7 @@ crime_counts |>
 crime_counts |>
   filter(area == "rest") |>
   rename(date = offence_date) |>
-  select(-venue) |>
+  select(-complex) |>
   # Join day lengths
   left_join(day_lengths, by = c("city", "date")) |>
   # Join events

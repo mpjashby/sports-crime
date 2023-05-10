@@ -62,19 +62,15 @@ cities <- c(
     # Get city from venue
     city = case_match(
       venue_name,
-      "AT&T Park" ~ "San Francisco",
-      "Busch Stadium" ~ "St Louis",
-      "Citi Field" ~ "New York",
+      c("Guaranteed Rate Field", "U.S. Cellular Field", "Wrigley Field") ~
+        "Chicago",
       "Comerica Park" ~ "Detroit",
-      "Dodger Stadium" ~ "Los Angeles",
-      "Guaranteed Rate Field" ~ "Chicago",
       "Kauffman Stadium" ~ "Kansas City",
-      "Oracle Park" ~ "San Francisco",
-      "Safeco Field" ~ "Seattle",
-      "T-Mobile Park" ~ "Seattle",
-      "Wrigley Field" ~ "Chicago",
-      "U.S. Cellular Field" ~ "Chicago",
-      "Yankee Stadium" ~ "New York",
+      "Dodger Stadium" ~ "Los Angeles",
+      c("Citi Field", "Yankee Stadium") ~ "New York",
+      c("AT&T Park", "Oracle Park") ~ "San Francisco",
+      "Busch Stadium" ~ "St Louis",
+      c("Safeco Field", "T-Mobile Park") ~ "Seattle",
       .default = NA_character_
     ),
     # Get time-zone from city
@@ -93,9 +89,19 @@ cities <- c(
     # If the game was a tie, set NA, otherwise TRUE if home team won, else FALSE
     home_win = if_else(is_tie, NA, teams_home_is_winner)
   ) |>
-  # `with_tz` only accepts a single time-zone name, so we have to run it
-  # separately on the data for each time zone
-  mutate(date_time = with_tz(date_time_utc, tzone = tz), .by = tz) |>
+  # `with_tz()` only accepts a single time-zone name *and* R dttm vectors can
+  # only hold a single time-zone (see `?force_tz`), so we have to run
+  # `with_tz()` separately on the data for each time zone and then enforce a
+  # consistent time zone (UTC) on all the data so it can be held in a single
+  # vector. This will mean that all the times are stored as being in UTC, but
+  # should be treated as being local.
+  mutate(
+    date_time = map2_vec(
+      date_time_utc,
+      tz,
+      \(x, y) force_tz(with_tz(x, tzone = y), tzone = "UTC")
+    )
+  ) |>
   select(city, venue = venue_name, date_time, home_win) |>
   # Check data is in the format we expect (any deviation from these assertions
   # causes an error)
@@ -160,10 +166,10 @@ rMLS::fixtures(2010, 2019) |>
 # NATIONAL BASKETBALL ASSOCIATION ----------------------------------------------
 
 # Get data (NBA seasons are over the winter, so we need data for 2020 too)
-events_nba <- load_nba_schedule(2010:2020) |>
+load_nba_schedule(2010:2020) |>
   filter(
     venue_address_city %in% c(
-      "Chicago", "Detroit", "Los Angeles", "Memphis", "New York"
+      "Chicago", "Detroit", "Los Angeles", "New York"
       # The Golden State Warriors moved to San Francisco at the end of 2019, so
       # there are only 17 games to include in the data, which probably isn't
       # enough to estimate from
@@ -194,9 +200,19 @@ events_nba <- load_nba_schedule(2010:2020) |>
     # won, else FALSE (NBA games cannot end in a tie)
     home_win = if_else(neutral_site, NA, home_winner)
   ) |>
-  # `with_tz` only accepts a single time-zone name, so we have to run it
-  # separately on the data for each time zone
-  mutate(date_time = with_tz(date_time_utc, tzone = tz), .by = tz) |>
+  # `with_tz()` only accepts a single time-zone name *and* R dttm vectors can
+  # only hold a single time-zone (see `?force_tz`), so we have to run
+  # `with_tz()` separately on the data for each time zone and then enforce a
+  # consistent time zone (UTC) on all the data so it can be held in a single
+  # vector. This will mean that all the times are stored as being in UTC, but
+  # should be treated as being local.
+  mutate(
+    date_time = map2_vec(
+      date_time_utc,
+      tz,
+      \(x, y) force_tz(with_tz(x, tzone = y), tzone = "UTC")
+    )
+  ) |>
   filter(between(as_date(date_time), ymd("2010-01-01"), ymd("2019-12-31"))) |>
   select(city, venue, date_time, home_win) |>
   arrange(city, venue, date_time, home_win) |>
@@ -252,8 +268,8 @@ nhl_schedule(2009:2019) |>
       .default = NA_character_
     ),
     # Parse game dates/times
-    # `date` gives the date-time in Zulu time, so we need to convert this
-    # to local later
+    # `date` gives the date-time in UTC, so we need to convert this to local
+    # later
     date_time_utc = parse_date_time(game_date, orders = "Ymd T", tz = "UTC"),
     # Categorise win/lose/tie
     home_win = case_when(
@@ -262,9 +278,19 @@ nhl_schedule(2009:2019) |>
       .default = NA
     )
   ) |>
-  # `with_tz` only accepts a single time-zone name, so we have to run it
-  # separately on the data for each time zone
-  mutate(date_time = with_tz(date_time_utc, tzone = tz), .by = tz) |>
+  # `with_tz()` only accepts a single time-zone name *and* R dttm vectors can
+  # only hold a single time-zone (see `?force_tz`), so we have to run
+  # `with_tz()` separately on the data for each time zone and then enforce a
+  # consistent time zone (UTC) on all the data so it can be held in a single
+  # vector. This will mean that all the times are stored as being in UTC, but
+  # should be treated as being local.
+  mutate(
+    date_time = map2_vec(
+      date_time_utc,
+      tz,
+      \(x, y) force_tz(with_tz(x, tzone = y), tzone = "UTC")
+    )
+  ) |>
   filter(between(as_date(date_time), ymd("2010-01-01"), ymd("2019-12-31"))) |>
   select(city, venue = venue_name, date_time, home_win) |>
   # Check data is in the format we expect (any deviation from these assertions
@@ -365,7 +391,7 @@ here("original_data") |>
     city = case_match(
       venue,
       "Darrell K Royal-Texas Memorial Stadium" ~ "Austin",
-      c("Los Angeles Memorial Coliseum", "Rose Bowl") ~ "Los Angeles",
+      "Los Angeles Memorial Coliseum" ~ "Los Angeles",
       "Arizona Stadium" ~ "Tucson",
       .default = NA_character_
     ),
@@ -386,9 +412,19 @@ here("original_data") |>
   # Remove rows outside the cities we're interested in -- this has to be done
   # first because `with_tz()` errors if the tz code is missing
   filter(!is.na(city)) |>
-  # `with_tz` only accepts a single time-zone name, so we have to run it
-  # separately on the data for each time zone
-  mutate(date_time = with_tz(start_date, tzone = tz), .by = tz) |>
+  # `with_tz()` only accepts a single time-zone name *and* R dttm vectors can
+  # only hold a single time-zone (see `?force_tz`), so we have to run
+  # `with_tz()` separately on the data for each time zone and then enforce a
+  # consistent time zone (UTC) on all the data so it can be held in a single
+  # vector. This will mean that all the times are stored as being in UTC, but
+  # should be treated as being local.
+  mutate(
+    date_time = map2_vec(
+      start_date,
+      tz,
+      \(x, y) force_tz(with_tz(x, tzone = y), tzone = "UTC")
+    )
+  ) |>
   filter(
     # Only games that actually happened (i.e. were not cancelled, etc.)
     completed == TRUE,

@@ -12,11 +12,14 @@ library(tidyverse)
 
 # Load data --------------------------------------------------------------------
 
+
 ## Load crime data ----
 
 crimes <- here("analysis_data/crime_data.csv.gz") |>
   read_csv() |>
   mutate(
+    # Re-expand city names, which needed to be compressed to make the crime-data
+    # file smaller (yes, it does make that much of a difference)
     city = case_match(
       city,
       "aus" ~ "Austin",
@@ -46,8 +49,9 @@ crimes <- here("analysis_data/crime_data.csv.gz") |>
     )
   ) |>
   # A few crimes will now be recorded as occurring outside the time period we
-  # are analysing, so filter these out
-  filter(between(offence_date, ymd("2010-01-01"), ymd("2019-12-31"))) |>
+  # are analysing and the final data no-longer has data for the whole 24-hours,
+  # so filter these out
+  filter(between(offence_date, ymd("2010-01-01"), ymd("2019-12-30"))) |>
   st_as_sf(coords = c("longitude", "latitude"), crs = "EPSG:4326") |>
   # Keep only columns we need, since the dataset is very large
   select(city, offence_date, offence_type)
@@ -60,7 +64,7 @@ city_boundaries <- here("original_data/city_outlines.gpkg") |>
   rename(city = city_name)
 
 
-## Load stadium buffers ----
+## Load stadium-complex buffers ----
 
 venues <- read_sf(here("analysis_data/venue_buffers.gpkg"))
 
@@ -110,13 +114,13 @@ counts_venue <- crimes |>
 
         this_city_venues <- venues |>
           filter(city == this_city) |>
-          select(venue)
+          select(complex, geom)
 
         city_data |>
           st_join(this_city_venues) |>
           st_drop_geometry() |>
-          filter(!is.na(venue)) |>
-          count(offence_type, venue, offence_date)
+          filter(!is.na(complex)) |>
+          count(offence_type, complex, offence_date)
 
       },
       .progress = TRUE
@@ -187,16 +191,21 @@ bind_rows(
   "rest" = counts_rest,
   .id = "area"
 ) |>
-  # Conver to tsibble so we can use `fill_gaps()`, which requires a time-series
+  # Convert to tsibble so we can use `fill_gaps()`, which requires a time-series
   # aware dataset
-  as_tsibble(key = c(city, area, offence_type, venue), index = offence_date) |>
+  as_tsibble(
+    key = c(city, area, offence_type, complex),
+    index = offence_date
+  ) |>
   # Fill gaps in the time series that represent dates with zero crimes in a
   # particular area in a particular city
   fill_gaps(
     n = 0,
     .full = TRUE,
     .start = ymd("2010-01-01"),
-    .end = ymd("2019-12-31")
+    # Finish on the penultimate day of the final year because starting the day
+    # at 05:00 means we don't have data for the full 24 hours of the final day
+    .end = ymd("2019-12-30")
   ) |>
   # Move city to be the first column
   select(city, everything()) |>
