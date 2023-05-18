@@ -53,3 +53,29 @@ here("analysis_data/model_venue_day.rds") |>
 
 
 ## Model for venues on weekdays/weekends in daytime/evening ----
+here("analysis_data/model_venue_day_time.rds") |>
+  read_rds() |>
+  spread_draws(r_complex[complex,term]) |>
+  filter(str_detect(term, "^sport")) |>
+  median_qi() |>
+  separate(
+    term,
+    into = c("sport", "weekday", "time"),
+    sep = ":",
+    fill = "right"
+  ) |>
+  mutate(
+    time = if_else(str_detect(weekday, "^time"), weekday, time),
+    weekday = if_else(str_detect(weekday, "^time"), NA_character_, weekday)
+  ) |>
+  replace_na(list(weekday = "weekend", time = "none")) |>
+  mutate(
+    across(c(r_complex, .lower, .upper), exp),
+    sig = !(.lower <= 1 & .upper >= 1),
+    sport = str_remove(sport, "sport"),
+    complex = str_squish(str_replace_all(complex, fixed("."), " ")),
+    stadium = str_glue("{complex} -- {sport}"),
+    weekday = str_remove(weekday, "TRUE$"),
+    time = str_remove(time, "^time")
+  ) |>
+  write_csv(here("analysis_data/draws_venue_day_time.csv.gz"))
