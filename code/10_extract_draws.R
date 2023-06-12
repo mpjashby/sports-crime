@@ -79,3 +79,25 @@ here("analysis_data/model_venue_day_time.rds") |>
     time = str_remove(time, "^time")
   ) |>
   write_csv(here("analysis_data/draws_venue_day_time.csv.gz"))
+
+
+
+# DOWNTOWN MODELS --------------------------------------------------------------
+
+
+## Model for downtown on all days/times ----
+here("analysis_data/model_downtown_all.rds") |>
+  read_rds() |>
+  spread_draws(r_city[city,term]) |>
+  filter(str_detect(term, "^sport")) |>
+  median_qi() |>
+  mutate(
+    across(c(r_city, .lower, .upper), exp),
+    sig = !(.lower <= 1 & .upper >= 1),
+    sport = str_remove(term, "sport"),
+    complex = str_squish(str_replace_all(city, fixed("."), " ")),
+    city_sport = str_glue("{city} -- {sport}")
+  ) |>
+  write_csv(here("analysis_data/draws_downtown_all.csv.gz")) |>
+  glimpse()
+
